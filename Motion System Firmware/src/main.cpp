@@ -1,24 +1,27 @@
 #include <Arduino.h>
 #include <TMCStepper.h>     // TMCstepper - https://github.com/teemuatlut/TMCStepper
-#include <SoftwareSerial.h> // Software serial for the UART to TMC2209 - https://www.arduino.cc/en/Reference/softwareSerial
-#include <Streaming.h>      // for the << operator I think
+#include <AccelStepper.h>
 
-#define EN_PIN 2                         // Enable - PURPLE
-#define DIR_PIN 3                        // Direction - WHITE
-#define STEP_PIN 4                       // Step - ORANGE
-#define SW_SCK 5                         // Software Slave Clock (SCK) - BLUE
-#define SERIAL_PORT Serial1              // TMC2208/TMC2224 HardwareSerial port
-#define DRIVER_ADDRESS 0b00              // TMC2209 Driver address according to MS1 and MS2
-#define R_SENSE 0.11f                    // SilentStepStick series use 0.11 ...and so does my fysetc TMC2209 (?)
+#define EN_PIN           2 // Enable
+#define DIR_PIN          3 // Direction
+#define STEP_PIN         4 // Step
+#define SERIAL_PORT Serial2 // TMC2208/TMC2224 HardwareSerial port
+#define R_SENSE 0.11f // SilentStepStick series use 0.11
+#define DRIVER_ADDRESS 0b00 // TMC2209 Driver address according to MS1 and MS2
+#define STALL_VALUE     100 // [0..255] Gotta figure out stallguard
+
 
 
 TMC2209Stepper driver(&SERIAL_PORT, R_SENSE, DRIVER_ADDRESS); // Create TMC driver
+using namespace TMC2208_n;
+AccelStepper stepper = AccelStepper(stepper.DRIVER, STEP_PIN, DIR_PIN);
 
 #define MAXANGLE = 330
 #define ENDSTOP_AZ_MAX 6
 #define ENDSTOP_ALT_MAX 7
-float azESteps = 555.555;
-float altESteps = 555.555;
+float azSteps = 555.555;
+float altSteps = 555.555;
+int microSteps = 2;
 
 float azPos = 0;
 float altPos = 0;
@@ -27,126 +30,173 @@ int accel;
 long maxSpeed;
 int speedChangeDelay;
 bool dir = false;
+float latitude;
+float longitude;
+double altitude;
+double radAltitude;
+double azimuth;
+double ut = 0; // Figure out how to do this - ut time now, has to be in hours.decimal
+double millisAfterUtRead;
 
-float calculateAngle(int esteps, String axis)
-{
-  if (axis == "az")
-  {
-    return (esteps * azESteps);
-  }
-  if (axis == "alt")
-  {
-    return (esteps * altESteps);
-  }
+double ra;
+double dec;
+double radLatitude = Rad(latitude);
+double radDec = Rad(dec);
+double radHourAngle;
+int expPosAz;
+int expPosAlt;
+int difference;
+
+
+String RcvTxt = "";
+String raStr;
+String decStr;
+
+double Rad(double angle){
+  return (angle * (M_PI/180.0));
+}
+double Deg(double angle){
+   return (angle * (180.0/M_PI));
 }
 
-void moveAxis(String axis, float angle, String direction)
-{
-  // Insert code here
 
-  if (direction == "neg")
-  {
-    if (axis == "az")
-    {
-      azPos = azPos - angle;
-    }
-    else if (axis == "alt")
-    {
-      altPos = altPos - angle;
-    }
 
-    if (direction == "pos")
-    {
-      if (axis == "az")
-      {
-        azPos = azPos + angle;
-      }
-      else if (axis == "alt")
-      {
-        altPos = altPos + angle;
-      }
-    }
-  }
-}
-
-void moveSingleStep(String axis, String Direction)
+void moveAxis(String axis, int steps, String direction) //(az, alt)(neg, pos)
 {
   // Insert code here
 }
 
-void northLoc(float lat, float dirFront)
-{                                        // latitude and direction to front
-  moveAxis("alt", lat, "pos");           // Moves up from straight ahead
-  moveAxis("az", (0 - dirFront), "neg"); // Moves to North
+double dayFrac(){
+  double currMillis = millis() - millisAfterUtRead;
+  return (currMillis/(1000*3600*24));
+}
+
+double UtNow(){
+  double currMillis = millis() - millisAfterUtRead;
+  return (ut + (currMillis/(1000*3600)));
 }
 
 void initialization()
 {
-  // Move to endstop for AZ
-  while (digitalRead(ENDSTOP_AZ_MAX != 1))
-  {
-    moveSingleStep("az", "neg");
+
+}
+
+
+double Lst(){  // in degrees
+   double totalLst = 100.46 + 0.985647 * dayFrac() + longitude + 15*UtNow();
+   return (totalLst - (int)(totalLst/360));
+}
+
+float CelestialToEquatorial(){
+  double hourAngle = Lst() - ra;
+  radHourAngle = Rad(hourAngle);
+  if (hourAngle < 0){
+    hourAngle = hourAngle + 360.0;
+  }else if (!(hourAngle<360)){
+    hourAngle = hourAngle - 360.0;
   }
-  while (digitalRead(ENDSTOP_ALT_MAX != 1))
-  {
-    moveSingleStep("alt", "neg");
+  double sinAlt = (
+    sin(radDec)*sin(radLatitude) +
+    cos(radDec)*cos(radLatitude)*hourAngle
+  );
+  radAltitude = asin(sinAlt);
+  altitude = Deg(radAltitude);
+
+
+  double cosA = ((sin(radDec)-(sin(radAltitude)*sin(radLatitude)))/
+          (cos(radAltitude)*cos(radLatitude))); 
+  if (sin(radHourAngle)<0){
+    azimuth = Deg(acos(cosA));
+  } else{
+    azimuth = 360.0 - Deg(acos(cosA));
   }
 
-  // Currently assuming facing east and level
-}
-void computeposition()
-{
-  float lat = 41.2493292;
-  float lon = -77.0027671;
+
+
+
 }
 void setup()
 {
+    Serial.begin(9600);
+    while(!Serial);
+    Serial.println("Start...");
+    pinMode(EN_PIN, OUTPUT);
+    pinMode(STEP_PIN, OUTPUT);
+    pinMode(DIR_PIN, OUTPUT);
+    digitalWrite(EN_PIN, LOW);  
+    
+    SERIAL_PORT.begin(19200);
+    Serial.println("serial opened...");
 
-  Serial.begin(11520);          // initialize hardware serial for debugging
-  TMCdriver.beginSerial(11520); // Initialize UART
+    driver.beginSerial(19200);
+    driver.begin();
+    driver.toff(4); 
+    driver.rms_current(400);    // Set stepper current to 600mA. The command is the same as command TMC2130.setCurrent(600, 0.11, 0.5);
+    driver.pwm_autoscale(true); // Needed for stealthChop
+    driver.microsteps(microSteps);
+    //driver.TCOOLTHRS(0xFFFFF); // 20bit max
+    //driver.semin(5);
+    //driver.semax(2);
+    //driver.sedn(0b01);
+    //driver.SGTHRS(STALL_VALUE);
+    Serial.println("reg values set...");
 
-  pinMode(EN_PIN, OUTPUT);
-  pinMode(STEP_PIN, OUTPUT);
-  pinMode(DIR_PIN, OUTPUT);
-  digitalWrite(EN_PIN, LOW); // Enable driver in hardware
+    stepper.setMaxSpeed(400);
+    stepper.setAcceleration(1000);
+    stepper.setEnablePin(EN_PIN);
+    stepper.setPinsInverted(false, false, true);
+    stepper.enableOutputs();
+    Serial.println("stepper settings done...");
+    Serial.println("Testing driver connection through Microsteps");
+    while (!(driver.microsteps() == microSteps)){
+        Serial.println("Driver not connected");
+    }
 
-  TMCdriver.begin();          // UART: Init SW UART (if selected) with default 115200 baudrate
-  TMCdriver.toff(5);          // Enables driver in software
-  TMCdriver.rms_current(500); // Set motor RMS current
-  TMCdriver.microsteps(256);  // Set microsteps
 
-  TMCdriver.en_spreadCycle(false);
-  TMCdriver.pwm_autoscale(true); // Needed for stealthChop
 
-  pinMode(ENDSTOP_AZ_MAX, INPUT_PULLUP);
-  pinMode(ENDSTOP_ALT_MAX, INPUT_PULLUP);
-
-  float fov = 2;
-  float hRes = 10;
-  float vRes = 10;
-  float integrationTime = 10; // in seconds
 }
 
 void loop()
 {
-  accel = 10000;          // Speed increase/decrease amount
-  maxSpeed = 50000;       // Maximum speed to be reached
-  speedChangeDelay = 100; // Delay between speed changes
-
-  for (long i = 0; i <= maxSpeed; i = i + accel)
-  {                       // Speed up to maxSpeed
-    TMCdriver.VACTUAL(i); // Set motor speed
-    Serial << TMCdriver.VACTUAL() << endl;
-    delay(100);
+  CelestialToEquatorial();
+  expPosAz = azimuth * azSteps * microSteps;
+  expPosAlt = altitude * altSteps * microSteps;
+  if (expPosAlt < altPos){
+    difference = altPos - expPosAlt;
+    moveAxis("alt",difference,"neg");
+  } else if(expPosAlt > altPos){
+    difference = expPosAlt - altPos;
+    moveAxis("alt",difference,"pos");
+  } else if(expPosAz < azPos){
+    difference = azPos - expPosAz;
+    moveAxis("az",difference,"neg");
+  } else if(expPosAz > azPos){
+    difference = expPosAz - azPos;
+    moveAxis("az",difference,"pos");
+  }
+  if (Serial.available() >0){
+    while (Serial.available() >0){ // check the readString() function for this
+      RcvTxt = RcvTxt +  Serial.read();
+    }
+    /*
+    Commands that can be recieved:
+    'm':move
+    'p': recieve position, lat = 41.241489  lon = -77.041924
+    */
+    switch(RcvTxt.charAt(0)){
+      case 'm':
+        raStr = RcvTxt.substring(1,9);
+        ra = raStr.toFloat();
+        decStr = RcvTxt.substring(10,9);
+        dec = decStr.toFloat();
+        Serial.println("RA: " + raStr + "DEC" + decStr); // Recieved and processed
+      break;
+      case 'p':
+        latitude = RcvTxt.substring(1,9).toFloat();
+        longitude = RcvTxt.substring(10,9).toFloat();
+        Serial.println("200"); // Recieved and processed
+      break;
+    }
   }
 
-  for (long i = maxSpeed; i >= 0; i = i - accel)
-  { // Decrease speed to zero
-    TMCdriver.VACTUAL(i);
-    Serial << TMCdriver.VACTUAL() << endl;
-    delay(100);
-  }
-
-  dir = !dir;           // REVERSE DIRECTION
-  TMCdriver.shaft(dir); // SET DIRECTION
 }

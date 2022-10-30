@@ -1,0 +1,174 @@
+#include <Arduino.h>
+#include <TMCStepper.h>     // TMCstepper - https://github.com/teemuatlut/TMCStepper
+#include <SoftwareSerial.h> // Software serial for the UART to TMC2209 - https://www.arduino.cc/en/Reference/softwareSerial
+#include <Streaming.h>      // for the << operator I think
+
+#define EN_PIN 2                         // Enable - PURPLE
+#define DIR_PIN 3                        // Direction - WHITE
+#define STEP_PIN 4                       // Step - ORANGE
+#define SW_SCK 5                         // Software Slave Clock (SCK) - BLUE
+#define SERIAL_PORT Serial1              // TMC2208/TMC2224 HardwareSerial port
+#define DRIVER_ADDRESS 0b00              // TMC2209 Driver address according to MS1 and MS2
+#define R_SENSE 0.11f                    // SilentStepStick series use 0.11 ...and so does my fysetc TMC2209 (?)
+
+
+TMC2209Stepper driver(&SERIAL_PORT, R_SENSE, DRIVER_ADDRESS); // Create TMC driver
+
+#define MAXANGLE = 330
+#define ENDSTOP_AZ_MAX 6
+#define ENDSTOP_ALT_MAX 7
+float azESteps = 555.555;
+float altESteps = 555.555;
+
+float azPos = 0;
+float altPos = 0;
+
+int accel;
+long maxSpeed;
+int speedChangeDelay;
+bool dir = false;
+float latitude;
+float longitude;
+double altitude;
+double azimuth;
+double ut = 0; // Figure out how to do this - ut time now, has to be in hours.decimal
+double millisAfterUtRead;
+
+
+String RcvTxt = "";
+
+double Rad(double angle){
+  return (angle * (3.14159265358979323846/180.0));
+}
+double Deg(double angle){
+   return (angle * (180.0/3.14159265358979323846));
+}
+
+void moveAxis(String axis, int steps, String direction) //(az, alt)(neg, pos)
+{
+  // Insert code here
+}
+
+double dayFrac(){
+  double currMillis = millis() - millisAfterUtRead;
+  return (currMillis/(1000*3600*24));
+}
+
+double UtNow(){
+  double currMillis = millis() - millisAfterUtRead;
+  return (ut + (currMillis/(1000*3600)));
+}
+
+void initialization()
+{
+
+}
+
+void shutterOn(){
+  //blink LED here for a start
+}
+
+double Lst(){  // in degrees
+   double totalLst = 100.46 + 0.985647 * dayFrac() + longitude + 15*UtNow();
+   return (totalLst - (int)(totalLst/360));
+}
+
+float CelestialToSteps(double ra, double dec){
+   double hourAngle = Lst() - ra;
+   if (hourAngle < 0){
+     hourAngle = hourAngle + 360.0;
+   }else if (!(hourAngle<360)){
+     hourAngle = hourAngle - 360.0;
+   }
+   double sinAlt = (
+     sin(dec)*sin(latitude) +
+     cos(dec)*cos(latitude)*hourAngle
+   );
+   altitude = asin(sinAlt);                         //trig may take float only as input, gotta check if error
+   
+   double cosA = ((sin(dec)-(sin(altitude)*sin(latitude)))/
+           (cos(altitude)*cos(latitude))); 
+   if (sin(hourAngle)<0){
+     azimuth - acos(cosA);
+   } else{
+     azimuth = 360.0 - acos(cosA);
+   }
+
+
+}
+void setup()
+{
+  Serial.begin(11520);
+  
+  
+
+  driver.beginSerial(11520); // Initialize UART
+
+  pinMode(EN_PIN, OUTPUT);
+  pinMode(STEP_PIN, OUTPUT);
+  pinMode(DIR_PIN, OUTPUT);
+  digitalWrite(EN_PIN, LOW); // Enable driver in hardware
+
+  driver.begin();          // UART: Init SW UART (if selected) with default 115200 baudrate
+  driver.toff(5);          // Enables driver in software
+  driver.rms_current(500); // Set motor RMS current
+  driver.microsteps(256);  // Set microsteps
+
+  driver.en_spreadCycle(false);
+  driver.pwm_autoscale(true); // Needed for stealthChop
+
+  pinMode(ENDSTOP_AZ_MAX, INPUT_PULLUP);
+  pinMode(ENDSTOP_ALT_MAX, INPUT_PULLUP);
+
+  float fov = 2;
+  float hRes = 10;
+  float vRes = 10;
+  float integrationTime = 10; // in seconds
+}
+
+void loop()
+{
+  int expPosAz;
+  int expPosAlt;
+  int difference;
+
+  //expPosAz = CalculateExpectedPositionAz();
+  //expPosAlt = CalculateExpectedPositionAlt();
+  if (expPosAlt < altPos){
+    difference = altPos - expPosAlt;
+    moveAxis("alt",difference,"neg");
+  } else if(expPosAlt > altPos){
+    difference = expPosAlt - altPos;
+    moveAxis("alt",difference,"pos");
+  } else if(expPosAz < azPos){
+    difference = azPos - expPosAz;
+    moveAxis("az",difference,"neg");
+  } else if(expPosAz > azPos){
+    difference = expPosAz - azPos;
+    moveAxis("az",difference,"pos");
+  }
+  if (Serial.available() >0){
+    while (Serial.available() >0){ // check the readString() function for this
+      RcvTxt = RcvTxt +  Serial.read();
+    }
+    /*
+    Commands that can be recieved:
+    'm':move
+    'p': recieve position, lat = 41.241489  lon = -77.041924
+    */
+    switch(RcvTxt.charAt(0)){
+      case 'm':
+        float ra = RcvTxt.substring(1,9).toFloat();
+        float dec = RcvTxt.substring(10,9).toFloat();
+        Serial.println("200"); // Recieved and processed
+        CelestialToSteps(ra, dec);
+      break;
+      case 'p':
+        latitude = RcvTxt.substring(1,9).toFloat();
+        longitude = RcvTxt.substring(10,9).toFloat();
+        Serial.println("200"); // Recieved and processed
+      break;
+    }
+  }
+
+}
