@@ -2,29 +2,19 @@
 #include <TMCStepper.h>     // TMCstepper - https://github.com/teemuatlut/TMCStepper
 #include <AccelStepper.h>
 
-#define EN_PIN_AZ           2 // Enable
-#define DIR_PIN_AZ          3 // Direction
-#define STEP_PIN_AZ         4 // Step
-#define SERIAL_PORT_AZ Serial2 // TMC2208/TMC2224 HardwareSerial port
+#define EN_PIN           2 // Enable
+#define DIR_PIN          3 // Direction
+#define STEP_PIN         4 // Step
+#define SERIAL_PORT Serial2 // TMC2208/TMC2224 HardwareSerial port
 #define R_SENSE 0.11f // SilentStepStick series use 0.11
 #define DRIVER_ADDRESS 0b00 // TMC2209 Driver address according to MS1 and MS2
 #define STALL_VALUE     100 // [0..255] Gotta figure out stallguard
 
-#define EN_PIN_ALT           5 // Enable
-#define DIR_PIN_ALT         6 // Direction
-#define STEP_PIN_ALT        7 // Step
-#define SERIAL_PORT_ALT Serial1 // TMC2208/TMC2224 HardwareSerial port
 
 
-
-
-
-
-TMC2209Stepper driverAz(&SERIAL_PORT_AZ, R_SENSE, DRIVER_ADDRESS); // Create TMC driver for AZ
-TMC2209Stepper driverAlt(&SERIAL_PORT_ALT, R_SENSE, DRIVER_ADDRESS); // Create TMC driver
+TMC2209Stepper driver(&SERIAL_PORT, R_SENSE, DRIVER_ADDRESS); // Create TMC driver
 using namespace TMC2208_n;
-AccelStepper stepperAz = AccelStepper(stepperAz.DRIVER, STEP_PIN_AZ, DIR_PIN_AZ);
-AccelStepper stepperAlt = AccelStepper(stepperAlt.DRIVER, STEP_PIN_ALT, DIR_PIN_ALT);
+AccelStepper stepper = AccelStepper(stepper.DRIVER, STEP_PIN, DIR_PIN);
 
 #define MAXANGLE = 330
 #define ENDSTOP_AZ_MAX 6
@@ -71,23 +61,9 @@ double Deg(double angle){
 
 
 
-void moveAxis(String axis, int steps) //(az, alt)(neg, pos)
+void moveAxis(String axis, int steps, String direction) //(az, alt)(neg, pos)
 {
-  if (axis == "alt"){
-      if (stepperAlt.distanceToGo() == 0) {
-        stepperAlt.disableOutputs();
-        delay(10);
-        stepperAlt.moveTo(steps); // Move 100 deg
-        stepperAlt.enableOutputs();
-  } else if (axis == "az"){
-      if (stepperAz.distanceToGo() == 0) {
-        stepperAz.disableOutputs();
-        delay(10);
-        stepperAz.moveTo(steps); // Move 100 deg
-        stepperAz.enableOutputs();
-      }
-    }
-  }
+  // Insert code here
 }
 
 double dayFrac(){
@@ -142,92 +118,38 @@ float CelestialToEquatorial(){
 void setup()
 {
     Serial.begin(9600);
-    while(!Serial){
-      delay(1000);
-    };
+    while(!Serial);
     Serial.println("Start...");
-
-
-    ///////////////////////////////////////////////////////////////////////////
-    ///////////////////Setting Pins for AccelStepper///////////////////////////
-    ///////////////////////////////////////////////////////////////////////////
-
-    // AZ axis
-    pinMode(EN_PIN_AZ, OUTPUT);
-    pinMode(STEP_PIN_AZ, OUTPUT);
-    pinMode(DIR_PIN_AZ, OUTPUT);
-    digitalWrite(EN_PIN_AZ, LOW); 
-
-    // ALT axis
-    pinMode(EN_PIN_ALT, OUTPUT);
-    pinMode(STEP_PIN_ALT, OUTPUT);
-    pinMode(DIR_PIN_ALT, OUTPUT);
-    digitalWrite(EN_PIN_ALT, LOW); 
-    ///////////////////////////////////////////////////////////////////////////
-    ///////////////////////////////////////////////////////////////////////////
-
-
-    ///////////////////////////////////////////////////////////////////////////
-    ///////////////////Serial Comm for setting registries//////////////////////
-    ///////////////////////////////////////////////////////////////////////////
-    SERIAL_PORT_AZ.begin(19200);
-    SERIAL_PORT_ALT.begin(19200);
+    pinMode(EN_PIN, OUTPUT);
+    pinMode(STEP_PIN, OUTPUT);
+    pinMode(DIR_PIN, OUTPUT);
+    digitalWrite(EN_PIN, LOW);  
+    
+    SERIAL_PORT.begin(19200);
     Serial.println("serial opened...");
 
-    // Writing to registries for AZ axis
-    driverAz.beginSerial(19200);
-    driverAz.begin();
-    driverAz.toff(4); 
-    driverAz.rms_current(400);    // Set stepper current to 600mA. The command is the same as command TMC2130.setCurrent(600, 0.11, 0.5);
-    driverAz.pwm_autoscale(true); // Needed for stealthChop
-    driverAz.microsteps(microSteps);
+    driver.beginSerial(19200);
+    driver.begin();
+    driver.toff(4); 
+    driver.rms_current(400);    // Set stepper current to 600mA. The command is the same as command TMC2130.setCurrent(600, 0.11, 0.5);
+    driver.pwm_autoscale(true); // Needed for stealthChop
+    driver.microsteps(microSteps);
     //driver.TCOOLTHRS(0xFFFFF); // 20bit max
     //driver.semin(5);
     //driver.semax(2);
     //driver.sedn(0b01);
-    //driver.SGTHRS(STALL_VALUE); Gotta figure this out for stallguard
-
-    // Writing to registries for ALT axis
-    driverAlt.beginSerial(19200);
-    driverAlt.begin();
-    driverAlt.toff(4); 
-    driverAlt.rms_current(400);    // Set stepper current to 600mA. The command is the same as command TMC2130.setCurrent(600, 0.11, 0.5);
-    driverAlt.pwm_autoscale(true); // Needed for stealthChop
-    driverAlt.microsteps(microSteps);
-    // printout for troubleshooting if needed
+    //driver.SGTHRS(STALL_VALUE);
     Serial.println("reg values set...");
-    ///////////////////////////////////////////////////////////////////////////
-    ///////////////////////////////////////////////////////////////////////////
 
-
-    ///////////////////////////////////////////////////////////////////////////
-    //////////////////////////AccelStepper Settings////////////////////////////
-    ///////////////////////////////////////////////////////////////////////////
-
-    // Az axis
-    stepperAz.setMaxSpeed(400);
-    stepperAz.setAcceleration(1000);
-    stepperAz.setEnablePin(EN_PIN_AZ);
-    stepperAz.setPinsInverted(false, false, true);
-    stepperAz.enableOutputs();
-
-    // Alt Axis
-    stepperAlt.setMaxSpeed(400);
-    stepperAlt.setAcceleration(1000);
-    stepperAlt.setEnablePin(EN_PIN_ALT);
-    stepperAlt.setPinsInverted(false, false, true);
-    stepperAlt.enableOutputs();
-    ///////////////////////////////////////////////////////////////////////////
-    ///////////////////////////////////////////////////////////////////////////
-
+    stepper.setMaxSpeed(400);
+    stepper.setAcceleration(1000);
+    stepper.setEnablePin(EN_PIN);
+    stepper.setPinsInverted(false, false, true);
+    stepper.enableOutputs();
+    Serial.println("stepper settings done...");
     Serial.println("Testing driver connection through Microsteps");
-    while (!(driverAz.microsteps() == microSteps)){
-        Serial.println("Az Driver not connected - Test 1");
-        delay(1000);
-    }
-    while (!(driverAlt.microsteps() == microSteps)){
-        Serial.println("Alt Driver not connected - Test 2");
-        delay(1000);
+    while (!(driver.microsteps() == microSteps)){
+        Serial.println("Driver not connected");
     }
 
 
@@ -239,10 +161,18 @@ void loop()
   CelestialToEquatorial();
   expPosAz = azimuth * azSteps * microSteps;
   expPosAlt = altitude * altSteps * microSteps;
-  if (expPosAlt != altPos){
-    moveAxis("alt",expPosAlt);
-  } else if(expPosAz != azPos){
-    moveAxis("az",expPosAz);
+  if (expPosAlt < altPos){
+    difference = altPos - expPosAlt;
+    moveAxis("alt",difference,"neg");
+  } else if(expPosAlt > altPos){
+    difference = expPosAlt - altPos;
+    moveAxis("alt",difference,"pos");
+  } else if(expPosAz < azPos){
+    difference = azPos - expPosAz;
+    moveAxis("az",difference,"neg");
+  } else if(expPosAz > azPos){
+    difference = expPosAz - azPos;
+    moveAxis("az",difference,"pos");
   }
   if (Serial.available() >0){
     while (Serial.available() >0){ // check the readString() function for this
